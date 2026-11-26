@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0f0f14">
-<title>music.7mit</title>
+<title>music.7mit — Pemutar Musik</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg">
 <link rel="stylesheet" href="style.css">
@@ -12,26 +12,44 @@
 <body>
 <header>
   <h1>music<span>.7mit</span></h1>
-  <input id="search" type="search" placeholder="Cari lagu…">
-  <label class="btn">+ Tambah lagu<input id="files" type="file" accept="audio/*" multiple hidden></label>
+  <input id="search" type="search" placeholder="Cari lagu, artis, album…">
+  <button id="add" class="btn">+ Tambah</button>
+  <input id="files" type="file" accept="audio/*" multiple hidden>
+  <input id="folder" type="file" webkitdirectory multiple hidden>
 </header>
-<main>
-  <ul id="list"></ul>
-  <p id="empty">Belum ada lagu. Tekan “+ Tambah lagu” untuk memilih file musik dari perangkatmu.</p>
-</main>
-<footer id="player">
-  <div class="info"><div id="title">—</div><div id="sub">music.7mit</div></div>
+<main id="view"></main>
+
+<div id="mini" hidden>
+  <div id="miniprog"><i></i></div>
+  <div class="minirow">
+    <div class="meta" id="minimeta"><b id="mtitle">—</b><small id="martist"></small></div>
+    <button id="mprev">⏮</button><button id="mplay" class="pbtn">▶</button><button id="mnext">⏭</button>
+  </div>
+</div>
+<nav id="nav">
+  <button data-v="home" class="on">🏠<span>Beranda</span></button>
+  <button data-v="library">🎵<span>Pustaka</span></button>
+  <button data-v="playlists">📂<span>Playlist</span></button>
+  <button data-v="eq">🎚<span>Equalizer</span></button>
+  <button data-v="theme">🎨<span>Tema</span></button>
+</nav>
+
+<section id="full" hidden>
+  <div class="fhead"><button id="fclose">⌄</button><span>Sedang diputar</span><button id="fqueue">☰</button></div>
+  <canvas id="viz" width="600" height="300"></canvas>
+  <div class="ftitle"><b id="ftitle">—</b><small id="fartist"></small></div>
   <input id="seek" type="range" min="0" max="1000" value="0">
   <div class="time"><span id="cur">0:00</span><span id="dur">0:00</span></div>
   <div class="ctrl">
-    <button id="shuffle" title="Acak">🔀</button>
-    <button id="prev" title="Sebelumnya">⏮</button>
-    <button id="play" class="big" title="Putar/Jeda">▶</button>
-    <button id="next" title="Berikutnya">⏭</button>
-    <button id="repeat" title="Ulangi">🔁</button>
+    <button id="shuffle">🔀</button><button id="prev">⏮</button>
+    <button id="play" class="pbtn big">▶</button>
+    <button id="next">⏭</button><button id="repeat">🔁</button>
   </div>
-</footer>
-<audio id="audio"></audio>
+  <div class="ctrl small"><button id="like">♡</button><button id="vizmode">Visualizer</button><button id="more">⋯</button></div>
+</section>
+
+<div id="sheetbg" hidden><div id="sheet"></div></div>
+<audio id="audio" preload="auto"></audio>
 <script src="app.js"></script>
 </body>
 </html>
