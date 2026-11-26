@@ -9,7 +9,7 @@
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "dev": "node --watch --disable-warning=ExperimentalWarning server/index.js",
     "test": "node --disable-warning=ExperimentalWarning --test tests/unit/*.test.js",
-    "test:e2e": "node tests/e2e/run.cjs",
+    "test:e2e": "node tests/e2e/run.cjs && node tests/e2e/youtube.cjs",
     "screenshots": "node tests/e2e/screenshots.cjs"
   },
   "dependencies": { "ws": "^8.18.0" }

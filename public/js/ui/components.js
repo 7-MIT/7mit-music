@@ -3,6 +3,7 @@ import { app, toggleFav, needAuth, refreshLibraryFlags } from '../core/app.js';
 import { api, get, post, del } from '../core/api.js';
 import { engine, S, setQueue, playNext, enqueue, startRadio, cur } from '../player/engine.js';
 import { go } from '../core/router.js';
+import { ensureImported } from '../core/yt.js';
 
 export const img = (src, alt = '', cls = '') => h('img', { src, alt, class: cls, loading: 'lazy', decoding: 'async', draggable: false, onerror: e => { e.target.onerror = null; e.target.src = '/media/covers/default.svg'; } });
 export const link = (href, ...kids) => h('a', { href }, ...kids);
@@ -39,7 +40,7 @@ export function trackRow(t, list, i, o = {}) {
   const like = h('button', { class: 'ib' + (app.favs.has(t.id) ? ' liked' : ''), 'aria-label': app.favs.has(t.id) ? `Unlike ${t.title}` : `Like ${t.title}`, 'aria-pressed': app.favs.has(t.id), onclick: e => { e.stopPropagation(); toggleFav(t); } }, icon('heart'));
   const row = h('div', { class: 'row' + (o.select || o.drag ? ' x' : ''), dataset: { id: t.id }, draggable: !!o.drag, role: 'listitem' },
     o.select ? h('input', { type: 'checkbox', 'aria-label': `Select ${t.title}`, checked: o.isSel?.(t), onchange: e => { o.select(t, e.target.checked); row.classList.toggle('sel', e.target.checked); } }) : (o.drag ? h('span', { class: 'grip', title: 'Drag to reorder' }, icon('grip')) : null), lead,
-    h('div', { class: 'rm', onclick: () => o.numbered || setQueue(list, i) }, h('div', { class: 'rt' }, t.title, ' ', badge(t.demo && o.badge)), h('div', { class: 'rs' }, o.numbered && !o.showArtist ? (t.artist) : [t.artist, t.album && !o.hideAlbum ? ' · ' + t.album : ''])),
+    h('div', { class: 'rm', onclick: () => o.numbered || setQueue(list, i) }, h('div', { class: 'rt' }, t.title, ' ', badge(t.demo && o.badge), t.provider === 'youtube' ? h('span', { class: 'badge yt', title: 'Plays in YouTube’s embedded player' }, 'YouTube') : null), h('div', { class: 'rs' }, o.numbered && !o.showArtist ? (t.artist) : [t.artist, t.album && !o.hideAlbum ? ' · ' + t.album : ''])),
     h('div', { class: 'rd' }, t.durationMs ? fmtTime(t.durationMs / 1000) : ''), like, h('button', { class: 'ib', 'aria-label': `More options for ${t.title}`, onclick: e => { e.stopPropagation(); trackMenu(t, o); } }, icon('dots')));
   if (o.drag) {
     row.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', String(i)); e.dataTransfer.effectAllowed = 'move'; row.classList.add('dragging'); });
@@ -48,7 +49,8 @@ export function trackRow(t, list, i, o = {}) {
     row.addEventListener('drop', e => { e.preventDefault(); row.classList.remove('dragover'); const from = +e.dataTransfer.getData('text/plain'); if (!isNaN(from) && from !== i) o.drag(from, i); });
     row.addEventListener('keydown', e => { if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); o.drag(i, i + (e.key === 'ArrowUp' ? -1 : 1)); } });
   }
-  syncRow(row); return row;
+  const syncLike = () => { if (!row.isConnected) return app.removeEventListener('library', syncLike); const on = app.favs.has(t.id); like.classList.toggle('liked', on); like.setAttribute('aria-pressed', on); like.setAttribute('aria-label', on ? `Unlike ${t.title}` : `Like ${t.title}`); };
+  app.addEventListener('library', syncLike); syncRow(row); return row;
 }
 export function syncRow(row) { const c = cur(), on = c && row.dataset.id === c.id; row.classList.toggle('current', !!on); row.classList.toggle('playing', !!on && S.playing); }
 export const syncRows = () => $$('.row[data-id]').forEach(syncRow);
@@ -60,7 +62,7 @@ export async function trackMenu(t, o = {}) {
     { icon: 'play', label: 'Play next', onclick: () => { playNext(t); toast('Will play next'); } },
     { icon: 'queue', label: 'Add to queue', onclick: () => { enqueue(t); toast('Added to queue'); } },
     { icon: 'heart', label: app.favs.has(t.id) ? 'Remove from liked songs' : 'Add to liked songs', onclick: () => toggleFav(t) },
-    { icon: 'plus', label: 'Add to playlist…', onclick: () => pickPlaylist([t.id]) },
+    { icon: 'plus', label: 'Add to playlist…', onclick: () => pickPlaylist([t]) },
     t.kind === 'song' && { icon: 'radio', label: 'Start radio', onclick: async () => { const n = await startRadio(t); toast(n ? 'Radio started' : 'No similar tracks yet'); } },
     t.albumId && { icon: 'music', label: 'Go to album', onclick: () => go('/album/' + t.albumId) },
     t.artistId && { icon: 'user', label: 'Go to artist', onclick: () => go('/artist/' + t.artistId) },
@@ -75,8 +77,10 @@ export async function editLyrics(t) {
   try { const r = await get(`/api/tracks/${t.id}/lyrics`); const u = r.lyrics.find(l => l.provider === 'user'); if (u) ta.value = u.content; } catch {}
   modal('Lyrics for ' + t.title, h('div', h('p', { class: 'muted' }, 'Only add lyrics you have the right to use. Timed LRC lines enable synchronised highlighting.'), ta), [{ label: 'Cancel' }, { label: 'Save', primary: true, onclick: async () => { try { await api(`/api/tracks/${t.id}/lyrics`, { method: 'PUT', raw: ta.value }); toast('Lyrics saved'); engine.dispatchEvent(new Event('lyrics-changed')); } catch (e) { toast(e.message); return false; } } }]);
 }
-export async function pickPlaylist(trackIds) {
+export async function pickPlaylist(items) {
   if (!app.user) return needAuth('Sign in to build playlists.');
+  const trackIds = items.map(x => typeof x === 'string' ? x : x.id);
+  try { await ensureImported(items.filter(x => typeof x !== 'string')); } catch (e) { return toast(e.message); }
   let pls = []; try { pls = (await get('/api/library/playlists')).playlists; } catch (e) { return toast(e.message); }
   const add = async p => { try { const r = await post(`/api/playlists/${p.id}/tracks`, { trackIds }); toast(r.added ? `Added to ${p.name}` : `Already in ${p.name}`); } catch (e) { toast(e.message); } };
   sheet('Add to playlist', [{ icon: 'plus', label: 'New playlist…', onclick: async () => { const name = await promptBox('New playlist', 'Name', '', 'Create'); if (!name) return; try { const p = await post('/api/playlists', { name, trackIds }); toast(`Created “${p.name}”`); refreshLibraryFlags(); } catch (e) { toast(e.message); } } }, ...pls.map(p => ({ icon: 'list', label: p.name, onclick: () => add(p) }))]);

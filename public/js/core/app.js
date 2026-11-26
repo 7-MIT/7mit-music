@@ -1,13 +1,14 @@
 // Application-level state: account, preferences, library flags, theming. Preferences work for guests (localStorage) and sync for signed-in users.
 import { get, put, post, del } from './api.js';
 import { toast } from './dom.js';
+import { ensureImported } from './yt.js';
 
 export const DEFAULTS = {
   theme: 'dark', accent: 'terracotta', dynamic: true, slider: 'wavy', miniStyle: 'bar', language: 'en', region: 'global',
-  home: { order: ['quick', 'recent', 'mixes', 'new', 'editorial', 'stations'], hidden: [] },
+  home: { order: ['youtube', 'quick', 'recent', 'mixes', 'new', 'editorial', 'stations'], hidden: [] },
   lyrics: { size: 30, spacing: 1.4, align: 'left', glow: true, offsetMs: 0, providers: ['user', 'embedded', 'demo'], autoscroll: true },
   audio: { crossfade: 0, normalize: false, speed: 1, pitch: true, volume: 0.8, eq: { on: false, preset: 'Flat', gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], wizard: false } },
-  privacy: { history: true, scrobble: true }, lockQueue: false, autoRadio: true, aiConsent: false, alarm: { on: false, time: '07:30', playlist: '' }
+  privacy: { history: true, scrobble: true }, ytConsent: false, lockQueue: false, autoRadio: true, aiConsent: false, alarm: { on: false, time: '07:30', playlist: '' }
 };
 const merge = (a, b) => { const o = { ...a }; for (const k in b || {}) o[k] = (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object') ? merge(a[k], b[k]) : b[k]; return o; };
 const L = { get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
@@ -30,7 +31,12 @@ export function setPrefs(patch) {
   app.prefs = merge(app.prefs, patch); L.set('auralys.prefs', app.prefs); applyTheme(); emit('prefs');
   if (app.user) { L.set('auralys.dirty', true); clearTimeout(pushT); pushT = setTimeout(pushPrefs, patch.privacy ? 0 : 600); } // privacy changes sync immediately
 }
-const pushPrefs = () => put('/api/prefs', app.prefs).then(() => L.set('auralys.dirty', false)).catch(() => {});
+// Pushes are serialised: at most one PUT in flight, and a follow-up always carries the latest prefs, so requests can never land out of order.
+let pushing = false, pushAgain = false;
+function pushPrefs() {
+  if (pushing) { pushAgain = true; return; } pushing = true;
+  put('/api/prefs', app.prefs).then(() => { if (!pushAgain) L.set('auralys.dirty', false); }).catch(() => {}).finally(() => { pushing = false; if (pushAgain) { pushAgain = false; pushPrefs(); } });
+}
 export async function boot() {
   applyTheme();
   try { app.config = await get('/api/config'); } catch { app.config = { regions: [['global', 'Global']], moods: [], features: {} }; }
@@ -48,6 +54,7 @@ export async function refreshLibraryFlags() { try { const r = await get('/api/li
 export function needAuth(msg = 'Sign in to use this.') { toast(msg, { label: 'Sign in', fn: () => import('./router.js').then(m => m.go('/login?next=' + encodeURIComponent(location.pathname + location.search))) }); }
 export async function toggleFav(t) {
   if (!app.user) return needAuth('Sign in to like songs.');
+  try { await ensureImported([t]); } catch (e) { return toast(e.message); }
   const on = !app.favs.has(t.id); on ? app.favs.add(t.id) : app.favs.delete(t.id); t.fav = on; emit('library');
   try { on ? await put('/api/favorites/' + t.id) : await del('/api/favorites/' + t.id); } catch (e) { on ? app.favs.delete(t.id) : app.favs.add(t.id); t.fav = !on; emit('library'); toast(e.message); }
 }

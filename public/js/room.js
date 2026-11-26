@@ -36,12 +36,12 @@ export class Room extends EventTarget {
     const cur = E.cur(), want = q[state.index], sameQueue = E.S.queue.length === q.length && q.every((t, i) => E.S.queue[i]?.id === t.id);
     E.S.source === 'room' || (E.S.source = 'room');
     if (!sameQueue || cur?.id !== want?.id) { E.S.locked = false; if (q.length && want) E.setQueue(q, state.index, { autoplay: state.playing, source: 'room', startAt: Math.max(0, this.expected(state)), keepHistory: true }); E.lock(true, 'The host controls playback. You can still change your own volume.'); }
-    else { if (state.playing && E.media().paused) { E.S.locked = false; E.play(); E.lock(true, 'The host controls playback. You can still change your own volume.'); } if (!state.playing && !E.media().paused) { E.S.locked = false; E.pause(); E.lock(true, 'The host controls playback. You can still change your own volume.'); } E.S.locked = false; E.seek(this.expected(state), { silent: true }); E.lock(true, 'The host controls playback. You can still change your own volume.'); }
+    else { if (state.playing && E.isPaused()) { E.S.locked = false; E.play(); E.lock(true, 'The host controls playback. You can still change your own volume.'); } if (!state.playing && !E.isPaused()) { E.S.locked = false; E.pause(); E.lock(true, 'The host controls playback. You can still change your own volume.'); } E.S.locked = false; E.seek(this.expected(state), { silent: true }); E.lock(true, 'The host controls playback. You can still change your own volume.'); }
   }
   correct() { // latency / drift correction for listeners
     if (this.isHost || !this.state?.playing || E.S.source !== 'room') return; const exp = this.expected(), diff = E.S.position - exp; this.drift_ms = Math.round(diff * 1000); this.emit('latency', this.rtt);
     if (Math.abs(diff) > 0.4 && isFinite(E.S.duration) && E.S.duration) { E.S.locked = false; E.seek(Math.max(0, exp), { silent: true }); E.lock(true, 'The host controls playback. You can still change your own volume.'); }
-    if (E.media().paused && !E.S.error) { E.S.locked = false; E.play(); E.lock(true, 'The host controls playback. You can still change your own volume.'); }
+    if (E.isPaused() && !E.S.error) { E.S.locked = false; E.play(); E.lock(true, 'The host controls playback. You can still change your own volume.'); }
   }
   attach() { if (this.isHost) { ['user', 'queue', 'change'].forEach(n => E.engine.addEventListener(n, this.onEng)); } }
   detach() { ['user', 'queue', 'change'].forEach(n => E.engine.removeEventListener(n, this.onEng)); }

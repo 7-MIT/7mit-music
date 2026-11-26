@@ -2,6 +2,7 @@ import { createReadStream, statSync, writeFileSync, unlinkSync, existsSync } fro
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { DATA_DIR, uid } from './db.js';
+import { createYoutube, ytId, isVideoId } from './youtube.js';
 import { HttpError, bad, send, readBody, readJson, parseCookies, sha256, token, hashPassword, verifyPassword, rateLimit, clean, esc, sniffAudio, sniffImage } from './util.js';
 
 export const REGIONS = [['global', 'Global'], ['ID', 'Indonesia'], ['US', 'United States'], ['GB', 'United Kingdom'], ['JP', 'Japan'], ['BR', 'Brazil'], ['DE', 'Germany'], ['IN', 'India']];
@@ -10,7 +11,7 @@ const COOKIE = 'auralys_sid', SESSION_MS = 30 * 864e5;
 const MAX_UPLOAD = Number(process.env.MAX_UPLOAD_MB || 60) * 1048576;
 
 export function createApi({ db, config, rooms }) {
-  const routes = [];
+  const yt = createYoutube(config); const routes = [];
   const add = (method, path, opts, fn) => {
     if (typeof opts === 'function') { fn = opts; opts = {}; }
     const keys = []; const re = new RegExp('^' + path.replace(/:(\w+)/g, (_, k) => (keys.push(k), '([^/]+)')) + '/?$');
@@ -33,15 +34,15 @@ export function createApi({ db, config, rooms }) {
   const ip = req => req.socket.remoteAddress || 'x';
   const getPrefs = uidv => { const r = db.get('SELECT data FROM preferences WHERE user_id=?', uidv); try { return r ? JSON.parse(r.data) : {}; } catch { return {}; } };
 
-  const TRACK_SQL = `SELECT t.id,t.title,t.kind,t.genre,t.mood,t.duration_ms,t.demo,t.owner_id,t.track_no,t.description,t.podcast_id,t.artist_id,
-    ar.name artist, t.album_id, al.title album, COALESCE(al.cover, pc.cover, ar.cover) cover, pc.title podcast,
+  const TRACK_SQL = `SELECT t.id,t.title,t.kind,t.genre,t.mood,t.duration_ms,t.demo,t.owner_id,t.track_no,t.description,t.podcast_id,t.artist_id, t.provider, t.external_id,
+    ar.name artist, t.album_id, al.title album, COALESCE(t.cover, al.cover, pc.cover, ar.cover) cover, pc.title podcast,
     EXISTS(SELECT 1 FROM lyrics l WHERE l.track_id=t.id) has_lyrics,
     EXISTS(SELECT 1 FROM favorites f WHERE f.track_id=t.id AND f.user_id=:u) fav
     FROM tracks t LEFT JOIN artists ar ON ar.id=t.artist_id LEFT JOIN albums al ON al.id=t.album_id LEFT JOIN podcasts pc ON pc.id=t.podcast_id`;
   const VIS = `(t.owner_id IS NULL OR t.owner_id = :u)`;
   const shape = t => ({ id: t.id, title: t.title, kind: t.kind, genre: t.genre, mood: t.mood, durationMs: t.duration_ms, demo: !!t.demo, mine: !!t.owner_id,
     trackNo: t.track_no, description: t.description, artist: t.artist || t.podcast || 'Unknown artist', artistId: t.artist_id, album: t.album || t.podcast || null, albumId: t.album_id,
-    podcastId: t.podcast_id, cover: t.cover || '/media/covers/default.svg', hasLyrics: !!t.has_lyrics, fav: !!t.fav, url: `/api/tracks/${t.id}/stream` });
+    podcastId: t.podcast_id, cover: t.cover || '/media/covers/default.svg', hasLyrics: !!t.has_lyrics, fav: !!t.fav, provider: t.provider, videoId: t.provider === 'youtube' ? t.external_id : undefined, url: t.provider === 'youtube' ? null : `/api/tracks/${t.id}/stream` });
   const tracksWhere = (u, where = '1=1', extra = '', params = {}) =>
     db.raw.prepare(`${TRACK_SQL} WHERE ${VIS} AND (${where}) ${extra}`).all({ u: u?.id ?? '', ...params }).map(shape);
   const albumRow = a => ({ id: a.id, title: a.title, artist: a.artist, artistId: a.artist_id, year: a.year, cover: a.cover || '/media/covers/default.svg', demo: !!a.demo, releasedAt: a.released_at });
@@ -64,7 +65,7 @@ export function createApi({ db, config, rooms }) {
       lastfm: { available: !!(config.lastfmKey && config.lastfmSecret), note: config.lastfmKey ? 'Configured (not verified in CI).' : 'Set LASTFM_API_KEY and LASTFM_SHARED_SECRET to enable.' },
       recognition: { available: !!config.auddToken, note: config.auddToken ? 'Configured: AudD (not verified in CI).' : 'Set AUDD_API_TOKEN to enable a recognition provider.' },
       discord: { available: false, note: 'Discord Rich Presence needs a local desktop client; it cannot be done from a browser. Not implemented.' },
-      youtube: { available: false, note: 'No YouTube provider shipped. Embedded playback would be limited by the provider (no DSP, no background playback).' }
+      youtube: { available: yt.available, note: yt.available ? 'Metadata from the official YouTube Data API; playback in YouTube’s official embedded player (no equalizer/normalisation/crossfade, no background playback, YouTube’s own ads and terms apply).' : 'Set YOUTUBE_API_KEY (YouTube Data API v3) to search and play music from YouTube.' }
     }
   }));
 
@@ -150,6 +151,7 @@ export function createApi({ db, config, rooms }) {
   function streamTrack(c) {
     const t = db.get('SELECT * FROM tracks WHERE id=? AND (owner_id IS NULL OR owner_id=?)', c.params.id, c.user?.id ?? '');
     if (!t) throw new HttpError(404, 'Track not found');
+    if (t.provider !== 'local') throw new HttpError(404, 'This track is played through its provider’s embed, not streamed from this server.', 'unavailable');
     const file = join(DATA_DIR, 'media', 'audio', t.audio_path); let st;
     try { st = statSync(file); } catch { throw new HttpError(404, 'Audio file is unavailable', 'unavailable'); }
     const range = /bytes=(\d*)-(\d*)/.exec(c.req.headers.range || ''); let start = 0, end = st.size - 1, status = 200;
@@ -230,12 +232,12 @@ export function createApi({ db, config, rooms }) {
   add('GET', '/api/radio', (c) => {
     const seed = c.url.searchParams.get('seed'); const ex = new Set((c.url.searchParams.get('exclude') || '').split(',').filter(Boolean));
     const s = seed ? tracksWhere(c.user, 't.id = :id', '', { id: seed })[0] : null;
-    const pool = tracksWhere(c.user, "t.kind='song' AND t.owner_id IS NULL").filter(t => !ex.has(t.id) && t.id !== seed);
+    const pool = tracksWhere(c.user, "t.kind='song' AND t.owner_id IS NULL AND t.provider='local'").filter(t => !ex.has(t.id) && t.id !== seed);
     const score = t => (s && t.mood === s.mood ? 2 : 0) + (s && t.genre === s.genre ? 2 : 0) + (s && t.artistId === s.artistId ? 1 : 0) + Math.random() * 1.5;
     return { seed: s, tracks: pool.map(t => [score(t), t]).sort((a, b) => b[0] - a[0]).slice(0, 15).map(x => x[1]) };
   });
   add('GET', '/api/home', (c) => {
-    const u = c.user, all = tracksWhere(u, "t.kind='song' AND t.owner_id IS NULL", 'ORDER BY t.id');
+    const u = c.user, all = tracksWhere(u, "t.kind='song' AND t.owner_id IS NULL AND t.provider='local'", 'ORDER BY t.id');
     let recent = [], quick = all.slice(0, 8), top = [];
     if (u) {
       const ids = db.all('SELECT track_id, MAX(started_at) m FROM listening_events WHERE user_id=? GROUP BY track_id ORDER BY m DESC LIMIT 12', u.id).map(r => r.track_id);
@@ -475,6 +477,20 @@ export function createApi({ db, config, rooms }) {
     const ids = (Array.isArray(j.trackIds) ? j.trackIds : []).map(String).filter(id => allowed.has(id)); const uniq = [...new Set(ids)].slice(0, 15);
     if (!uniq.length) throw new HttpError(502, 'The AI answer contained no valid catalogue tracks.', 'provider_error');
     return { name: clean(j.name, 50) || 'AI mix', description: clean(j.description, 140), tracks: uniq.map(id => cat.find(t => t.id === id)) };
+  });
+
+
+  // ---------- YouTube (official Data API + embed) ----------
+  const ytShape = (t, favSet) => ({ id: ytId(t.videoId), title: t.title, kind: 'song', genre: null, mood: null, durationMs: t.durationMs, demo: false, mine: false, trackNo: null, description: null, artist: t.artist, artistId: null, album: null, albumId: null, podcastId: null, cover: t.cover || '/media/covers/default.svg', hasLyrics: false, fav: favSet?.has(ytId(t.videoId)) ?? false, provider: 'youtube', videoId: t.videoId, url: null });
+  const needYt = () => { if (!yt.available) throw new HttpError(501, 'YouTube is not configured on this server. Set YOUTUBE_API_KEY.', 'not_configured'); };
+  const favSet = u => new Set(u ? db.all("SELECT track_id FROM favorites WHERE user_id=? AND track_id LIKE 'yt_%'", u.id).map(r => r.track_id) : []);
+  add('GET', '/api/yt/search', (c) => { needYt(); rateLimit('yt:' + (c.user?.id || ip(c.req)), 60, 3600e3); const q = clean(c.url.searchParams.get('q'), 80); if (!q) return { tracks: [] }; return yt.search(q).then(ts => ({ tracks: ts.map(t => ytShape(t, favSet(c.user))) })); });
+  add('GET', '/api/yt/trending', (c) => { needYt(); rateLimit('yt:' + (c.user?.id || ip(c.req)), 60, 3600e3); const region = REGIONS.find(r => r[0] === (c.url.searchParams.get('region') || 'global'))?.[0] || 'global'; return yt.trending(region === 'global' ? 'US' : region).then(ts => ({ region, tracks: ts.map(t => ytShape(t, favSet(c.user))) })); });
+  add('POST', '/api/yt/import', { auth: 1 }, async (c) => {
+    needYt(); rateLimit('ytimp:' + c.user.id, 120, 3600e3); const b = await readJson(c.req, 4000), ids = [...new Set((Array.isArray(b.videoIds) ? b.videoIds : []).map(String).filter(isVideoId))].slice(0, 50);
+    const missing = ids.filter(id => !db.get('SELECT 1 x FROM tracks WHERE id=?', ytId(id))); const found = missing.length ? await yt.details(missing) : [];
+    db.tx(() => { for (const t of found) { let ar = db.get('SELECT id FROM artists WHERE name=? AND owner_id IS NULL AND demo=0', t.artist); if (!ar) { ar = { id: 'ar_' + uid(6) }; db.run('INSERT INTO artists (id,name) VALUES (?,?)', ar.id, t.artist); } db.run("INSERT OR IGNORE INTO tracks (id,title,artist_id,kind,duration_ms,audio_path,mime,provider,external_id,cover) VALUES (?,?,?,'song',?,'','video/youtube','youtube',?,?)", ytId(t.videoId), t.title, ar.id, t.durationMs, t.videoId, t.cover); } });
+    return { tracks: ids.map(id => tracksWhere(c.user, 't.id=:id', '', { id: ytId(id) })[0]).filter(Boolean) };
   });
 
   // ---------- dispatcher ----------

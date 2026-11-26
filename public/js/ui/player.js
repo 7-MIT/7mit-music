@@ -11,7 +11,7 @@ import { go } from '../core/router.js';
 const { S, engine } = E;
 const lyricCache = new Map();
 export async function loadLyrics(t) {
-  if (!t || t.local) return { available: false, reason: 'local' }; if (lyricCache.has(t.id)) return lyricCache.get(t.id);
+  if (!t || t.local) return { available: false, reason: 'local' }; if (t.provider === 'youtube') return { available: false, reason: 'youtube' }; if (lyricCache.has(t.id)) return lyricCache.get(t.id);
   let r; try { const d = await get(`/api/tracks/${t.id}/lyrics`); const order = app.prefs.lyrics.providers; const rows = d.lyrics.slice().sort((a, b) => order.indexOf(a.provider) - order.indexOf(b.provider)); const row = rows.find(x => order.includes(x.provider)); r = row ? { available: true, provider: row.provider, ...(row.format === 'lrc' ? parseLrc(row.content) : { synced: false, lines: row.content.split(/\r?\n/).filter(x => x.trim()).map(text => ({ t: null, text })) }) } : { available: false, reason: 'none' }; }
   catch (e) { return { available: false, reason: 'error', message: e.message }; }
   lyricCache.set(t.id, r); return r;
@@ -51,12 +51,12 @@ export function buildPlayer({ close }) {
     shuf.classList.toggle('on', S.shuffle); shuf.setAttribute('aria-pressed', S.shuffle); rep.classList.toggle('on', S.repeat !== 'off'); rep.replaceChildren(icon(S.repeat === 'one' ? 'repeat1' : 'repeat')); rep.setAttribute('aria-label', `Repeat: ${S.repeat}`);
     speedB.lastChild.textContent = `${S.speed}×`; sleepB.classList.toggle('on', !!S.sleep); sleepB.lastChild.textContent = S.sleep ? (S.sleep.endOfTrack ? 'End of track' : `${Math.max(0, Math.ceil((S.sleep.left ?? (S.sleep.endsAt - Date.now()) / 1000) / 60))} min`) : 'Sleep';
     const dis = S.locked; [prevB, nextB, shuf, rep].forEach(b => b.toggleAttribute('disabled', dis));
-    status.textContent = S.error?.message || (S.buffering ? 'Buffering…' : S.locked ? S.lockReason : '');
+    status.textContent = S.error?.message || (S.buffering ? 'Buffering…' : S.locked ? S.lockReason : (t?.provider === 'youtube' ? 'YouTube playback — equalizer, normalisation and crossfade don’t apply.' : ''));
   }
   function tick() { cur.textContent = fmtTime(S.position); dur.textContent = fmtTime(S.duration); lyr.tick(); }
   ['change', 'state', 'queue', 'sleep'].forEach(n => engine.addEventListener(n, () => { update(); if (n === 'change' || n === 'queue') que.render(); if (n === 'change') lyr.load(); })); engine.addEventListener('time', tick);
   app.addEventListener('library', update); app.addEventListener('prefs', () => { lyr.style(); update(); });
-  update(); tick();
+  update(); tick(); E.dockYouTube(art);
   return { el, slider, show(tab = 'player') { el.dataset.tab = tab; $$('.fp-tabs button', el).forEach(b => { b.classList.toggle('on', b.dataset.t === tab); b.setAttribute('aria-selected', b.dataset.t === tab); }); if (el.hidden) { el.hidden = false; lyr.load(); que.render(); closeB.focus({ preventScroll: true }); } slider.start(); }, hide() { el.hidden = true; }, art };
 }
 
@@ -82,7 +82,7 @@ function lyricsPanel() {
   async function load() {
     const t = E.cur(), my = ++token; idx = -2; L = null; body.replaceChildren(h('p', { class: 'muted' }, 'Loading lyrics…')); if (!t) return body.replaceChildren(h('p', { class: 'muted' }, 'Play something to see lyrics.'));
     L = await loadLyrics(t); if (my !== token) return;
-    if (!L.available) return body.replaceChildren(h('div', { class: 'empty', style: { fontFamily: 'var(--sans)' } }, icon('lyrics'), h('h3', 'Lyrics unavailable'), h('p', L.reason === 'local' ? 'Local files don’t have lyrics here.' : L.reason === 'error' ? L.message : 'No lyrics are stored for this track, and Auralys never makes lyrics up.'), t.mine && h('button', { class: 'btn', onclick: () => editLyrics(t) }, 'Add lyrics')));
+    if (!L.available) return body.replaceChildren(h('div', { class: 'empty', style: { fontFamily: 'var(--sans)' } }, icon('lyrics'), h('h3', 'Lyrics unavailable'), h('p', L.reason === 'local' ? 'Local files don’t have lyrics here.' : L.reason === 'youtube' ? 'Lyrics aren’t provided for YouTube tracks. (Auralys doesn’t scrape lyrics.)' : L.reason === 'error' ? L.message : 'No lyrics are stored for this track, and Auralys never makes lyrics up.'), t.mine && h('button', { class: 'btn', onclick: () => editLyrics(t) }, 'Add lyrics')));
     body.replaceChildren(...L.lines.map((ln, i) => h('div', { class: 'lyr-line', dataset: { i }, role: L.synced ? 'button' : null, tabindex: L.synced ? 0 : null, onclick: () => L.synced && E.seek(Math.max(0, ln.t - l().offsetMs / 1000)), onkeydown: e => e.key === 'Enter' && L.synced && E.seek(Math.max(0, ln.t - l().offsetMs / 1000)) }, ln.text)),
       h('p', { class: 'muted', style: { fontFamily: 'var(--sans)', fontSize: '13px', marginTop: '28px' } }, `${L.synced ? 'Synchronised' : 'Plain'} lyrics · source: ${L.provider}${L.provider === 'demo' ? ' (original demo lyrics)' : ''}. Romanisation and translation aren’t available in this build.`)); tick();
   }
@@ -100,7 +100,7 @@ function queuePanel() {
   function render() {
     const n = S.queue.length; head.replaceChildren(h('div', { class: 'toolbar' }, h('h2', { style: { font: '600 24px var(--serif)' } }, 'Queue'), h('span', { class: 'muted' }, `${n} track${n === 1 ? '' : 's'}`), h('span', { class: 'grow' }),
       h('label', { class: 'chip', style: { background: '#ffffff1c', color: 'inherit' } }, h('input', { type: 'checkbox', checked: app.prefs.lockQueue, onchange: e => setPrefs({ lockQueue: e.target.checked }), 'aria-label': 'Lock queue editing' }), ' Lock'), h('button', { class: 'btn sm ghost', onclick: () => { saved = E.clearQueue(); toast('Queue cleared', { label: 'Undo', fn: () => E.restoreQueue(saved) }); }, disabled: n < 2 }, 'Clear'),
-      h('button', { class: 'btn sm ghost', onclick: () => pickPlaylist(S.queue.filter(t => t.kind === 'song' && !t.local).map(t => t.id)), disabled: !n }, 'Save as playlist')),
+      h('button', { class: 'btn sm ghost', onclick: () => pickPlaylist(S.queue.filter(t => t.kind === 'song' && !t.local)), disabled: !n }, 'Save as playlist')),
       app.prefs.autoRadio ? h('p', { class: 'muted', style: { fontSize: '13px', margin: '0 0 10px' } }, 'When the queue ends, similar catalogue tracks keep playing (radio). Change this in Settings → Player.') : null);
     list.replaceChildren(...S.queue.map((t, i) => {
       const cur = i === S.index; const row = h('div', { class: 'row x' + (cur ? ' current' + (S.playing ? ' playing' : '') : ''), dataset: { id: t.id }, draggable: true, role: 'listitem', onclick: () => E.jumpTo(i) },

@@ -290,3 +290,10 @@ input[type=range]{accent-color:var(--accent-soft)}
 .lyr-ctl{gap:8px;overflow-x:auto;scrollbar-width:none}.lyr-ctl::-webkit-scrollbar{display:none}
 .roomnow{display:flex;gap:16px;align-items:center;flex-wrap:wrap}.roomnow .cover-lg{width:min(150px,38vw)}
 .bars{justify-content:flex-start;gap:6px}.bars i{max-width:44px}
+/* YouTube embed card — must stay visible (YouTube policy), so it floats above the bar or docks over the artwork */
+#ytbox{position:fixed;z-index:56;right:24px;bottom:calc(var(--player-h) + 28px);width:356px;height:200px;background:#000;border-radius:var(--r-md);overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--line)}
+#ytbox iframe,#ytbox #ytplayer{width:100%;height:100%;display:block;border:0}
+#ytbox .ytcap{position:absolute;left:8px;top:6px;font-size:11px;background:#000a;color:#fff;padding:2px 8px;border-radius:999px;pointer-events:none;opacity:.85}
+#ytbox.docked{border-radius:28px;box-shadow:0 24px 60px #0008}
+@media (max-width:760px){#ytbox:not(.docked){right:10px;left:auto;bottom:calc(150px + var(--safe-b));width:min(356px,calc(100vw - 20px))}}
+.badge.yt{background:#ff000026;color:#ff8c8c}

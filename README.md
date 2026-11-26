@@ -28,8 +28,8 @@ On first start the server creates `data/auralys.db`, applies `migrations/*.sql`,
 Create an account on `/login` to unlock the library, playlists, statistics and rooms.
 
 ```bash
-npm test            # 14 unit/integration tests (node:test) — all passing
-npm run test:e2e    # 38 Playwright tests (desktop + mobile) — 38/38 passing, starts its own server
+npm test            # 17 unit/integration tests (node:test) — all passing
+npm run test:e2e    # 38 Playwright tests (desktop + mobile) + 15 YouTube-integration tests (mocked Google) — all passing
 npm run screenshots # regenerates docs/screenshots/*.png from the running app
 ```
 
@@ -82,13 +82,31 @@ tests/    unit/*.test.js  e2e/{run,screenshots,helpers}.cjs
 |---|---|---|
 | `ANTHROPIC_API_KEY`, `AI_MODEL` | AI playlist suggestions (consent-gated, rate-limited, output validated against real track IDs) | Implemented; **not exercised against the live API** (no key). The "not configured" path is tested. |
 | `LASTFM_API_KEY`, `LASTFM_SHARED_SECRET`, `PUBLIC_URL` | Last.fm connect (OAuth state check) + scrobbling | Implemented; **not tested against Last.fm**. |
+| `YOUTUBE_API_KEY` | **YouTube as a music source**: search, trending by region, durations/thumbnails via the official YouTube Data API v3; playback via YouTube's official IFrame player | Implemented and tested against a **mock** of the Data API and a **fake IFrame player** — **never run against real YouTube** (no key / no network in CI). |
 | `AUDD_API_TOKEN` | Music recognition via AudD | Implemented; **not tested against AudD**. Without it the page says so and only offers a microphone test. |
 | `NODE_ENV=production` | `Secure` cookie flag (serve over HTTPS) | |
 
+## YouTube / YouTube Music as the data source
+
+YouTube Music has **no public API**, and its internal endpoints and stream URLs may not be used by third parties. Auralys therefore
+uses only what YouTube officially provides:
+
+* **Metadata** — YouTube Data API v3 (`search` with the Music category, `videos.list` for durations and `embeddable`, and
+  `chart=mostPopular` for regional trending). Set `YOUTUBE_API_KEY` (free quota is 10 000 units/day; a search costs ~100, so results
+  are cached for 10 minutes and requests are rate-limited). Non-embeddable and very short videos are filtered out.
+* **Playback** — YouTube's official IFrame Player API, shown in a visible card (YouTube policy) that docks over the artwork in the full
+  player. The user consents once before the embed loads (it contacts YouTube/Google); consent can be revoked in Settings → Integrations.
+* **Saving** — liking or adding a YouTube track to a playlist makes the **server re-fetch the metadata itself** and store it
+  (`tracks.provider='youtube'`, no audio). Clients can't inject metadata. History/statistics, Last.fm scrobbling and rooms work with
+  these tracks; rooms let each listener play the video in their own embed.
+* **Consequences you should expect:** no equalizer / normalisation / crossfade / visualiser, no background or offline playback, no lyrics
+  (Auralys doesn't scrape any), YouTube's ads and terms apply, and some videos refuse embedding (the UI shows the reason).
+* **Not done on purpose:** scraping YouTube Music, `ytmusicapi`/innertube, token solvers, `yt-dlp`-style extraction or downloads.
+
 ## Not supported / config-required (explicit list)
 
-* **No real commercial catalogue.** Only demo audio + your uploads. YouTube/other providers: not shipped; embedded
-  playback would be limited by the provider (no DSP, no background playback).
+* **No built-in commercial catalogue.** Without `YOUTUBE_API_KEY` there is only demo audio + your uploads. With it, YouTube is
+  available as described above — not verified against the live service.
 * **Discord Rich Presence**: impossible from a browser; not implemented. **Android Auto**: native-only; Media Session
   (lock screen, headset and media keys) is used instead.
 * **Romanisation / lyric translation**: not implemented (would need an authorised provider and permitted lyrics).
@@ -98,7 +116,7 @@ tests/    unit/*.test.js  e2e/{run,screenshots,helpers}.cjs
 * **DSP on third-party/cross-origin streams** (no CORS) is impossible; the EQ page explains this.
 * **UI language**: English only. Region only affects charts.
 * **Charts** are built from listening on *this* server, not a global service.
-* Recognition, Last.fm and AI were **not verified against their live services** (see table above).
+* Recognition, Last.fm, AI and YouTube were **not verified against their live services** (see table above).
 * Reference branding (logo/wordmark in `public/assets`) comes from the supplied APK assets — review their licence before
   public distribution. `q2.png` and the video frames are included only as visual references/login art.
 
