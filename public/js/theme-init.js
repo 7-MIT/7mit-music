@@ -1,0 +1,2 @@
+// Runs before first paint (external file so the strict CSP stays intact): applies the saved theme without a flash.
+try { const p = JSON.parse(localStorage.getItem('auralys.prefs') || '{}'), r = document.documentElement; let t = p.theme || 'dark'; if (t === 'system') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'; r.dataset.theme = t; r.dataset.accent = p.accent || 'terracotta'; } catch (e) {}

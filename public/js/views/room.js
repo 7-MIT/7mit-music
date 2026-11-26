@@ -1,0 +1,42 @@
+import { h, icon, toast, confirmBox, initials, fmtTime } from '../core/dom.js';
+import { app } from '../core/app.js';
+import { get, post, put } from '../core/api.js';
+import { go, query } from '../core/router.js';
+import { Room } from '../room.js';
+import * as E from '../player/engine.js';
+import { empty, signInPrompt, errorBox, img, trackList } from '../ui/components.js';
+
+export default async function room(ctx) {
+  const { el, params } = ctx; el.append(h('div', { class: 'pagehead' }, h('div', h('h1', 'Listen Together'), h('p', 'Hear the same track at the same moment. The host controls playback; everyone streams the audio themselves, and keeps their own volume.'))));
+  if (!app.user) return el.append(signInPrompt('listening rooms'));
+  return params.id ? roomView(ctx) : lobby(ctx);
+}
+async function lobby({ el }) {
+  const nameIn = h('input', { type: 'text', placeholder: `${app.user.name}'s room`, maxLength: 60, 'aria-label': 'Room name' }), codeIn = h('input', { type: 'text', placeholder: 'Paste an invite link', 'aria-label': 'Invite link' }), mine = h('div');
+  el.append(h('div', { class: 'room-grid' }, h('div', { class: 'panel' }, h('h3', 'Start a room'), h('p', { class: 'muted' }, 'You’ll be the host. Share the invite link with friends who have an Auralys account on this server.'), h('div', { class: 'field' }, nameIn), h('button', { class: 'btn primary', onclick: async () => { try { const r = await post('/api/rooms', { name: nameIn.value }); go(`/listen-together/${r.id}?code=${r.inviteCode}`); } catch (e) { toast(e.message); } } }, icon('together'), 'Create room')),
+    h('div', { class: 'panel' }, h('h3', 'Join a room'), h('div', { class: 'field' }, codeIn), h('button', { class: 'btn', onclick: () => { try { const u = new URL(codeIn.value.trim(), location.origin); if (u.pathname.startsWith('/listen-together/')) go(u.pathname + u.search); else throw 0; } catch { toast('That doesn’t look like an invite link.'); } } }, 'Join'))), h('h2', { class: 'sec' }, 'Your rooms'), mine);
+  try { const r = await get('/api/rooms'); mine.replaceChildren(r.rooms.length ? h('div', { class: 'tracks' }, r.rooms.map(x => h('a', { class: 'row', href: '/listen-together/' + x.id, style: { gridTemplateColumns: '1fr auto' } }, h('div', { class: 'rm' }, h('div', { class: 'rt' }, x.name), h('div', { class: 'rs' }, x.role === 'host' ? 'You’re the host' : 'Member')), icon('chev')))) : empty('together', 'No open rooms', 'Create one above.')); } catch (e) { mine.replaceChildren(errorBox(e)); }
+}
+async function roomView({ el, params, query: q }) {
+  let info; try { info = await get('/api/rooms/' + params.id); } catch (e) { return el.append(e.status === 404 ? empty('info', 'Room not found', 'It may have been closed.', h('a', { class: 'btn', href: '/listen-together' }, 'Back')) : errorBox(e)); }
+  if (info.closed) return el.append(empty('info', 'This room is closed', '', h('a', { class: 'btn', href: '/listen-together' }, 'Back')));
+  if (!info.member) { try { await post(`/api/rooms/${params.id}/join`, { code: q.get('code') || '' }); } catch (e) { return el.append(empty('lock', 'Can’t join this room', e.message, h('a', { class: 'btn', href: '/listen-together' }, 'Back'))); } }
+  const r = new Room(params.id); window.__room = r; const status = h('span', { class: 'badge', 'aria-live': 'polite' }, 'connecting'), lat = h('span', { class: 'muted', style: { fontSize: '13px' } }), title = h('h2', { class: 'sec', style: { margin: 0 } }), mem = h('div'), now = h('div'), queueBox = h('div'), pick = h('div'), inviteBox = h('div');
+  el.append(h('div', { class: 'toolbar' }, title, status, lat, h('span', { class: 'grow' }), h('button', { class: 'btn ghost sm', onclick: () => { E.lock(false); go('/listen-together'); } }, 'Leave'), h('button', { class: 'btn ghost sm danger', id: 'close-room', hidden: true, onclick: async () => { if (await confirmBox('Close this room?', 'Everyone will be disconnected.', 'Close room', true)) { await post(`/api/rooms/${params.id}/close`); go('/listen-together'); } } }, 'Close room')),
+    h('div', { class: 'room-grid' }, h('div', now, h('h2', { class: 'sec' }, 'Up next'), queueBox, h('h2', { class: 'sec' }, 'Add to the room'), pick), h('div', h('div', { class: 'panel' }, h('h3', 'Listeners'), mem), inviteBox)));
+  const hostOnly = h('p', { class: 'muted' });
+  function paint() {
+    title.textContent = r.room?.name || 'Room'; status.textContent = { live: 'Live', connecting: 'Connecting…', reconnecting: 'Reconnecting…', closed: 'Closed', denied: 'Access denied' }[r.status] || r.status; status.style.color = r.status === 'live' ? '#6fcf8f' : '';
+    document.getElementById('close-room').hidden = !r.isHost;
+    mem.replaceChildren(...r.members.map(m => h('div', { class: 'member' }, h('span', { class: 'avatar sm' }, initials(m.name)), h('div', { style: { flex: 1 } }, h('b', m.name + (m.id === r.you?.id ? ' (you)' : '')), h('div', { class: 'muted', style: { fontSize: '12.5px' } }, m.role === 'host' ? 'Host' : 'Listener')), h('span', { class: 'dot' + (m.online ? ' on' : ''), title: m.online ? 'Online' : 'Offline', 'aria-label': m.online ? 'online' : 'offline' }))));
+    const s = r.state, t = s && r.tracks.get(s.queue?.[s.index]);
+    now.replaceChildren(h('div', { class: 'panel roomnow' }, img(t?.cover || '/media/covers/default.svg', '', 'cover-lg'), h('div', { style: { minWidth: 0, flex: 1 } }, h('span', { class: 'eyebrow' }, s?.playing ? 'Now playing' : 'Paused'), h('h3', { style: { font: '600 28px var(--serif)', margin: '4px 0' } }, t?.title || 'Nothing yet'), h('p', { class: 'muted', style: { margin: 0 } }, t?.artist || (r.isHost ? 'Pick a track below to start.' : 'Waiting for the host to start something.')), h('p', { class: 'muted', style: { fontSize: '13px' } }, r.isHost ? 'You control playback for everyone.' : 'The host controls playback.'))));
+    const qs = (s?.queue || []).map(i => r.tracks.get(i)).filter(Boolean); queueBox.replaceChildren(qs.length ? h('div', { class: 'tracks' }, qs.map((x, i) => h('div', { class: 'row' + (i === s.index ? ' current' : ''), style: { gridTemplateColumns: 'auto 1fr auto' }, onclick: () => r.isHost && E.jumpTo(i) }, h('div', { class: 'lead' }, img(x.cover)), h('div', { class: 'rm' }, h('div', { class: 'rt' }, x.title), h('div', { class: 'rs' }, x.artist)), h('span', { class: 'rd' }, fmtTime(x.durationMs / 1000))))) : h('p', { class: 'muted' }, 'The queue is empty.'));
+    if (r.isHost && r.room) inviteBox.replaceChildren(h('div', { class: 'panel' }, h('h3', 'Invite'), h('p', { class: 'muted', style: { fontSize: '13px' } }, 'Anyone signed in with this link can join.'), h('button', { class: 'btn', onclick: async () => { const i = await get('/api/rooms/' + params.id); const url = `${location.origin}/listen-together/${params.id}?code=${i.inviteCode}`; try { await navigator.clipboard.writeText(url); toast('Invite link copied'); } catch { prompt('Copy this invite link', url); } } }, icon('link'), 'Copy invite link'), h('label', { class: 'setrow', style: { borderBottom: 0 } }, h('span', { class: 'lab' }, h('b', 'Listeners can add tracks')), h('span', { class: 'switch' }, h('input', { type: 'checkbox', checked: r.room.membersCanQueue, onchange: async e => { await put('/api/rooms/' + params.id, { membersCanQueue: e.target.checked }); } }), h('i')))));
+    lat.textContent = r.rtt != null ? `${Math.round(r.rtt)} ms latency${r.isHost ? '' : ` · drift ${r.drift_ms ?? 0} ms`}` : '';
+  }
+  let catalog = null; async function paintPick() { if (!catalog) { catalog = (await get('/api/search?q=a&type=tracks')).tracks; } pick.replaceChildren(h('div', { class: 'tracks' }, catalog.map(t => h('div', { class: 'row', style: { gridTemplateColumns: 'auto 1fr auto' } }, h('div', { class: 'lead' }, img(t.cover)), h('div', { class: 'rm' }, h('div', { class: 'rt' }, t.title), h('div', { class: 'rs' }, t.artist)), h('button', { class: 'btn sm', 'aria-label': `Add ${t.title} to the room`, onclick: async () => { if (r.isHost && !(r.state?.queue || []).length) { await r.fetchTracks([t.id]); E.setQueue([t], 0, { source: 'room', autoplay: true }); } else if (r.isHost) { E.S.source = 'room'; E.enqueue(t); } else r.addToQueue(t.id); } }, icon('plus'), 'Add'))))); }
+  ['status', 'meta', 'state', 'latency'].forEach(n => r.addEventListener(n, paint)); r.addEventListener('error', e => toast(e.detail.message)); r.addEventListener('status', () => { if (r.status === 'closed') toast('The host closed the room'); if (r.status === 'live') paintPick(); });
+  r.connect(); paint();
+  return () => r.leave();
+}
