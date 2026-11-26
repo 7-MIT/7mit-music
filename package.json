@@ -6,10 +6,11 @@
   "description": "Auralys Web — music streaming web app (local/licensed audio), PWA, realtime listening rooms",
   "engines": { "node": ">=22.13" },
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning server/index.js",
-    "dev": "node --watch --disable-warning=ExperimentalWarning server/index.js",
+    "start": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --watch --env-file-if-exists=.env --disable-warning=ExperimentalWarning server/index.js",
     "test": "node --disable-warning=ExperimentalWarning --test tests/unit/*.test.js",
     "test:e2e": "node tests/e2e/run.cjs && node tests/e2e/youtube.cjs",
+    "test:live": "node --env-file-if-exists=.env tests/e2e/youtube-live.cjs",
     "screenshots": "node tests/e2e/screenshots.cjs"
   },
   "dependencies": { "ws": "^8.18.0" }

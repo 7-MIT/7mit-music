@@ -1,0 +1,16 @@
+// OPTIONAL live smoke test against the REAL YouTube Data API and IFrame Player. Needs YOUTUBE_API_KEY and network access.
+//   YOUTUBE_API_KEY=... npm run test:live
+// It asserts the integration works (search/trending return data, the real embed loads and plays a known-embeddable video).
+// It deliberately does NOT assert that every search result is playable: many music videos refuse embedding, and
+// YouTube may also refuse from datacenter IPs. Those cases must surface as a visible error, which is asserted.
+const { chromium } = require('playwright'); const { startServer, test, assert, results } = require('./helpers.cjs');
+(async () => {
+  if (!process.env.YOUTUBE_API_KEY) { console.log('YOUTUBE_API_KEY not set — skipping live test'); return; }
+  const srv = await startServer(); const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }); const c = await b.newContext({ viewport: { width: 1440, height: 900 } });
+  await c.addInitScript(() => localStorage.setItem('auralys.prefs', JSON.stringify({ ytConsent: true }))); const p = await c.newPage();
+  console.log('\nLive YouTube (real services)');
+  await test('Data API: search and regional trending return real metadata', async () => { const s = await (await fetch(srv.url + '/api/yt/search?q=rick%20astley')).json(); assert(s.tracks?.length > 3 && s.tracks[0].videoId?.length === 11 && s.tracks[0].durationMs > 20000, JSON.stringify(s).slice(0, 200)); const t = await (await fetch(srv.url + '/api/yt/trending?region=ID')).json(); assert(t.tracks?.length > 3, 'trending'); });
+  await test('IFrame Player: a known-embeddable video really plays through the engine', async () => { await p.goto(srv.url + '/'); await p.waitForFunction(() => window.__auralys); await p.evaluate(() => __auralys.E.setQueue([{ id: 'yt_dQw4w9WgXcQ', provider: 'youtube', videoId: 'dQw4w9WgXcQ', title: 'probe', artist: 'x', album: null, cover: '/media/covers/default.svg', durationMs: 213000, kind: 'song', url: null }], 0)); await p.waitForFunction(() => __auralys.E.S.playing && __auralys.E.S.position > 2, null, { timeout: 25000 }); assert(await p.locator('#ytbox iframe').count() === 1); await p.evaluate(() => __auralys.E.pause()); await p.waitForFunction(() => !__auralys.E.S.playing, null, { timeout: 8000 }); });
+  await test('refused embeds surface as a visible error with an "Open on YouTube" fallback', async () => { await p.evaluate(() => __auralys.E.setQueue([{ id: 'yt_JGwWNGJdvx8', provider: 'youtube', videoId: 'JGwWNGJdvx8', title: 'maybe blocked', artist: 'x', album: null, cover: '/media/covers/default.svg', durationMs: 263000, kind: 'song', url: null }], 0)); const r = await Promise.race([p.waitForFunction(() => __auralys.E.S.error, null, { timeout: 20000 }).then(() => 'error'), p.waitForFunction(() => __auralys.E.S.playing && __auralys.E.S.position > 2, null, { timeout: 20000 }).then(() => 'plays')]); if (r === 'error') await p.waitForSelector('.toast button:has-text("Open on YouTube")'); console.log('     (this video:', r + ')'); });
+  await b.close(); await srv.stop(); const f = results.filter(r => r[0] === 'FAIL'); console.log(`\n${results.length - f.length}/${results.length} passed`); if (f.length) process.exit(1);
+})().catch(e => { console.error(e); process.exit(2); });

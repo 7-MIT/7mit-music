@@ -19,7 +19,7 @@ Requires **Node ≥ 22.13** (uses the built-in `node:sqlite`). One runtime depen
 
 ```bash
 npm install
-cp .env.example .env      # optional: integrations (see "Configuration")
+cp .env.example .env      # optional: integrations (see "Configuration"); loaded automatically by npm start
 npm start                 # http://localhost:3000
 ```
 
@@ -82,7 +82,7 @@ tests/    unit/*.test.js  e2e/{run,screenshots,helpers}.cjs
 |---|---|---|
 | `ANTHROPIC_API_KEY`, `AI_MODEL` | AI playlist suggestions (consent-gated, rate-limited, output validated against real track IDs) | Implemented; **not exercised against the live API** (no key). The "not configured" path is tested. |
 | `LASTFM_API_KEY`, `LASTFM_SHARED_SECRET`, `PUBLIC_URL` | Last.fm connect (OAuth state check) + scrobbling | Implemented; **not tested against Last.fm**. |
-| `YOUTUBE_API_KEY` | **YouTube as a music source**: search, trending by region, durations/thumbnails via the official YouTube Data API v3; playback via YouTube's official IFrame player | Implemented and tested against a **mock** of the Data API and a **fake IFrame player** — **never run against real YouTube** (no key / no network in CI). |
+| `YOUTUBE_API_KEY` | **YouTube as a music source**: search, trending by region, durations/thumbnails via the official YouTube Data API v3; playback via YouTube's official IFrame player | Mock-tested in CI (`npm run test:e2e`) **and smoke-tested live** with a real key (`npm run test:live`, see below). |
 | `AUDD_API_TOKEN` | Music recognition via AudD | Implemented; **not tested against AudD**. Without it the page says so and only offers a microphone test. |
 | `NODE_ENV=production` | `Secure` cookie flag (serve over HTTPS) | |
 
@@ -99,6 +99,12 @@ uses only what YouTube officially provides:
 * **Saving** — liking or adding a YouTube track to a playlist makes the **server re-fetch the metadata itself** and store it
   (`tracks.provider='youtube'`, no audio). Clients can't inject metadata. History/statistics, Last.fm scrobbling and rooms work with
   these tracks; rooms let each listener play the video in their own embed.
+* **Live verification (real key, from a cloud container):** Data API search + regional trending returned real results; the real
+  IFrame player loaded in headless Chromium and played a known-embeddable video through the engine (play/pause/seek/duration).
+  **However, most official music videos I tried (e.g. label uploads, "Shape of You", "Despacito", Lofi Girl streams) were refused by
+  YouTube itself with "This content isn't available"** from that datacenter IP, even though the Data API marks them embeddable.
+  Some are genuinely not embeddable; some may be restricted by network/region. On a normal home connection results will likely
+  differ — I could not verify that. When a video is refused the UI shows the reason and an **Open on YouTube** button, then skips on.
 * **Consequences you should expect:** no equalizer / normalisation / crossfade / visualiser, no background or offline playback, no lyrics
   (Auralys doesn't scrape any), YouTube's ads and terms apply, and some videos refuse embedding (the UI shows the reason).
 * **Not done on purpose:** scraping YouTube Music, `ytmusicapi`/innertube, token solvers, `yt-dlp`-style extraction or downloads.

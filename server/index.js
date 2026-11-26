@@ -25,7 +25,7 @@ export function startServer({ port = Number(process.env.PORT || 3000), dbFile, s
     if (req.method === 'HEAD') res.end(); else createReadStream(file).pipe(res); return true;
   }
   const server = createServer(async (req, res) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin'); res.setHeader('Content-Security-Policy', CSP); res.setHeader('Permissions-Policy', 'microphone=(self), camera=(), autoplay=(self "https://www.youtube.com" "https://www.youtube-nocookie.com")');
+    res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin'); res.setHeader('Content-Security-Policy', CSP); res.setHeader('Permissions-Policy', 'microphone=(self), camera=(), autoplay=(self "https://www.youtube.com" "https://www.youtube-nocookie.com")');
     let url; try { url = new URL(req.url, 'http://x'); } catch { res.writeHead(400); return res.end(); }
     let p; try { p = decodeURIComponent(url.pathname); } catch { res.writeHead(400); return res.end(); }
     if (p.startsWith('/api/')) return api(req, res, url);
