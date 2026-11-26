@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f0f14">
+<title>music.7mit</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>music<span>.7mit</span></h1>
+  <input id="search" type="search" placeholder="Cari lagu…">
+  <label class="btn">+ Tambah lagu<input id="files" type="file" accept="audio/*" multiple hidden></label>
+</header>
+<main>
+  <ul id="list"></ul>
+  <p id="empty">Belum ada lagu. Tekan “+ Tambah lagu” untuk memilih file musik dari perangkatmu.</p>
+</main>
+<footer id="player">
+  <div class="info"><div id="title">—</div><div id="sub">music.7mit</div></div>
+  <input id="seek" type="range" min="0" max="1000" value="0">
+  <div class="time"><span id="cur">0:00</span><span id="dur">0:00</span></div>
+  <div class="ctrl">
+    <button id="shuffle" title="Acak">🔀</button>
+    <button id="prev" title="Sebelumnya">⏮</button>
+    <button id="play" class="big" title="Putar/Jeda">▶</button>
+    <button id="next" title="Berikutnya">⏭</button>
+    <button id="repeat" title="Ulangi">🔁</button>
+  </div>
+</footer>
+<audio id="audio"></audio>
+<script src="app.js"></script>
+</body>
+</html>
